@@ -89,6 +89,7 @@ class SVGTree
 		XMLElementNode* rootNode () const {return _root;}
 
 	public:
+                static bool CREATE_WOFF_FONTS; ///< generate seperate .woff fonts
 		static bool USE_FONTS;           ///< if true, create font references and don't draw paths directly
 		static bool CREATE_STYLE;        ///<  use style elements and class attributes to reference fonts?
 		static bool CREATE_USE_ELEMENTS; ///< allow generation of <use/> elements?

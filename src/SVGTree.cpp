@@ -22,6 +22,8 @@
 #include <algorithm>
 #include <sstream>
 #include <string>
+#include <unistd.h>
+#include <sys/wait.h>
 #include "BoundingBox.h"
 #include "DependencyGraph.h"
 #include "DVIToSVG.h"
@@ -36,6 +38,7 @@ using namespace std;
 
 
 // static class variables
+bool SVGTree::CREATE_WOFF_FONTS=true;
 bool SVGTree::CREATE_STYLE=true;
 bool SVGTree::USE_FONTS=true;
 bool SVGTree::CREATE_USE_ELEMENTS=false;
@@ -335,18 +338,88 @@ static XMLElementNode* createGlyphNode (int c, const PhysicalFont &font, GFGlyph
 	return glyph_node;
 }
 
+static void createSFDGlyph (ostream& os, int c, double sx, double sy,double dx, double dy, const PhysicalFont &font, GFGlyphTracer::Callback *cb) {
+	Glyph glyph;
+	if (!font.getGlyph(c, glyph, cb) || (!SVGTree::USE_FONTS && !SVGTree::CREATE_USE_ELEMENTS))
+		return;
+
+	double upem = font.unitsPerEm();
+        double extend = font.style() ? font.style()->extend : 1;
+
+        os << "StartChar: " << font.glyphName(c) << '\n';
+        os << "Encoding: " << font.unicode(c) << ' ' << font.unicode(c) << " 0\n";
+        os << "Width: " << font.hAdvance(c)*extend << '\n';
+        os << "VWidth: " << font.vAdvance(c) << "\n";
+        
+        os << "Fore\n";
+        os << "SplineSet\n";
+        glyph.writeSFD(os, sx, sy, dx, dy);
+        os << "EndSplineSet\n";
+        os << "EndChar\n";
+}
+
+template<class IN, class OUT>
+static void base64_copy(OUT out, IN beg, IN end) {
+        static const char* base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        while(beg != end) {
+                char c[3] = {0,0,0};
+                int padding = 0;
+                c[0] = *beg++;
+                if(beg == end) {
+                        padding=2;
+                } else {
+                        c[1] = *beg++;
+                        if(beg == end) {
+                                padding = 1;
+                        } else {
+                                c[2] = *beg++;
+                        }
+                }
+                unsigned char* b=reinterpret_cast<unsigned char*>(c);
+                unsigned n = b[2] + (b[1] << 8) + (b[0] << 16);
+                for(int i=0; i < 4-padding; ++i) {
+                        *out++ = base64_chars[( n & 0xfc0000) >> 18];
+                        n <<= 6;
+                }
+                for(int i=0; i < padding; ++i) {
+                        *out++ = '=';
+                }
+        }
+}
+
 
 void SVGTree::appendFontStyles (const set<const Font*> &fonts) {
-	if (CREATE_STYLE && USE_FONTS && !fonts.empty() && _defs) {
+	if (CREATE_STYLE && USE_FONTS && !fonts.empty()) {
 		XMLElementNode *styleNode = new XMLElementNode("style");
 		styleNode->addAttribute("type", "text/css");
-		_root->insertAfter(styleNode, _defs);
+                if(_defs) 
+                  _root->insertAfter(styleNode, _defs);
+                else
+                  _root->insertBefore(styleNode, *_root->children().begin());
 		typedef map<int, const Font*> SortMap;
 		SortMap sortmap;
-		FORALL(fonts, set<const Font*>::const_iterator, it)
+                set<const PhysicalFont*> woffFonts;
+		FORALL(fonts, set<const Font*>::const_iterator, it) {
 			if (!dynamic_cast<const VirtualFont*>(*it))   // skip virtual fonts
 				sortmap[FontManager::instance().fontID(*it)] = *it;
+                        if(const PhysicalFont* pf = dynamic_cast<const PhysicalFont*>(*it))
+                                woffFonts.insert(pf);
+                }
 		ostringstream style;
+                FORALL(woffFonts, set<const PhysicalFont*>::const_iterator, it) {
+                        style << "@font-face { "
+                              << "font-family:" << (*it)->name() << ";";
+                                //<< "src:url(" << (*it)->name() << ".woff);"
+                                //<<"}\n";
+
+                        style << "src: url(data:application/x-font-woff;base64,";
+
+                        string fontfilename = (*it)->name() + ".woff";
+                        ifstream fontfile(fontfilename.c_str(), ios::binary);
+                        base64_copy(ostreambuf_iterator<char>(style),istreambuf_iterator<char>(fontfile), istreambuf_iterator<char>());
+
+                        style << ");}\n";
+                }
 		// add font style definitions in ascending order
 		FORALL(sortmap, SortMap::const_iterator, it) {
 			style << "text.f"     << it->first << ' '
@@ -370,7 +443,43 @@ void SVGTree::append (const PhysicalFont &font, const set<int> &chars, GFGlyphTr
 	if (chars.empty())
 		return;
 
-	if (USE_FONTS) {
+        if(CREATE_WOFF_FONTS) {
+          string sfdfile = font.name() + ".sfd";
+          ofstream sfd(sfdfile.c_str());
+
+          double scale = double(font.unitsPerEm()) / (font.ascent() - font.descent());
+
+          sfd << "SplineFontDB: 3.0\n";
+          sfd << "FontName: " << font.name() << "\n";
+          if (font.type() != PhysicalFont::MF && !font.verticalLayout()) {
+                  sfd << "Ascent: " << font.ascent()*scale << "\n";
+                  sfd << "Descent: " << -font.descent()*scale << "\n";
+          }
+          sfd << "LayerCount: 2\n";
+          sfd << "Layer: 0 0 \"Back\" 1\n";
+          sfd << "Layer: 1 0 \"Fore\" 0\n";
+          sfd << "Encoding: UnicodeFull\n";
+          sfd << "AntiAlias: 1\n";
+          sfd << "BeginChars: 1114112 " << chars.size() << "\n";
+
+          FORALL(chars, set<int>::const_iterator, i) {
+            sfd << "\n";
+            createSFDGlyph(sfd ,*i, 1.0, 1.0, 0.0, 0.0, font, cb);
+          }
+
+          sfd.close();
+
+          string fontfile = font.name() + ".woff";
+
+          int pid = fork();
+          if(pid == 0)
+            execlp("fontforge", "fontforge", "-lang=ff", "-c", "Open($1);Generate($2)", sfdfile.c_str(), fontfile.c_str(), (char*)NULL);
+          else {
+            int stat;
+            waitpid(pid, &stat, 0);
+          }
+        }
+	else if (USE_FONTS) {
 		XMLElementNode *fontNode = new XMLElementNode("font");
 		string fontname = font.name();
 		fontNode->addAttribute("id", fontname);

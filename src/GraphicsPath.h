@@ -257,6 +257,36 @@ class GraphicsPath
 			iterate(actions, true);
 		}
 
+		void writeSFD (std::ostream &os, double sx=1.0, double sy=1.0, double dx=0.0, double dy=0.0) const {
+			struct WriteActions : Actions {
+				WriteActions (std::ostream &os, double sx, double sy, double dx, double dy)
+					: _os(os), _sx(sx), _sy(sy), _dx(dx), _dy(dy) {}
+				void draw (char cmd, const Point *points, int n) {
+					for (int i=0; i < n; i++)
+						_os << _sx*points[i].x()+_dx << ' ' << _sy*points[i].y()+_dy << ' ';
+					switch (cmd) {
+						case 'M':
+                                                        _os << "m";
+                                                        _startPoint = points[0];
+                                                        break;
+						case 'L': _os << "l"; break;
+						case 'C': _os << "c"; break;
+                                                case 'Z':
+                                                        _os << _sx*_startPoint.x()+_dx <<' ' << _sy*_startPoint.y()+_dy << ' ' << 'l';
+                                                        break;
+						default: ;
+					}
+                                        _os << " 0"; // flags
+					_os << '\n';
+				}
+				std::ostream &_os;
+				double _sx, _sy, _dx, _dy;
+                                Point _startPoint;
+			} actions(os, sx, sy, dx, dy);
+			iterate(actions, false);
+		}
+                
+
 #if 0
 		void writePS (std::ostream &os, double sx=1.0, double sy=1.0, double dx=0.0, double dy=0.0) const {
 			struct WriteActions : Actions {
