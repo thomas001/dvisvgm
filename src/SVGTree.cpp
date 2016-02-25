@@ -473,7 +473,7 @@ void SVGTree::append (const PhysicalFont &font, const set<int> &chars, GFGlyphTr
 
           int pid = fork();
           if(pid == 0)
-            execlp("fontforge", "fontforge", "-lang=ff", "-c", "Open($1);Generate($2)", sfdfile.c_str(), fontfile.c_str(), (char*)NULL);
+            execlp("fontforge", "fontforge", "-lang=ff", "-c", "Open($1);SelectAll();AutoHint();Generate($2)", sfdfile.c_str(), fontfile.c_str(), (char*)NULL);
           else {
             int stat;
             waitpid(pid, &stat, 0);
