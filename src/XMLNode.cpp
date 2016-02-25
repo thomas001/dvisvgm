@@ -182,14 +182,12 @@ ostream& XMLElementNode::write (ostream &os) const {
 	FORALL(_attributes, AttribMap::const_iterator, i)
 		os << ' ' << i->first << "='" << i->second << '\'';
 	if (_children.empty())
-		os << "/>\n";
+		os << "/>";
 	else {
 		os << '>';
-		if (dynamic_cast<XMLElementNode*>(_children.front()))
-			os << '\n';
 		FORALL(_children, ChildList::const_iterator, i)
 			(*i)->write(os);
-		os << "</" << _name << ">\n";
+		os << "</" << _name << ">";
 	}
 	return os;
 }
@@ -247,7 +245,7 @@ void XMLTextNode::prepend (XMLNode *node) {
 
 ostream& XMLCDataNode::write (ostream &os) const {
 	if (!_data.empty())
-		os << "<![CDATA[\n" << _data << "]]>\n";
+		os << "<![CDATA[" << _data << "]]>";
 	return os;
 }
 
